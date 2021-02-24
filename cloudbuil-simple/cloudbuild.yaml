@@ -1,0 +1,19 @@
+steps:
+  # Build Stage
+  - id: 'Build image'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'Dockerfile', '-t', 'gcr.io/${PROJECT_ID}/simple-service:${SHORT_SHA}', '.']
+  - id: 'Push image'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ["push", 'gcr.io/${PROJECT_ID}/simple-service:${SHORT_SHA}']
+  - id: 'Deploy to GKE'
+    name: 'gcr.io/cloud-builders/gke-deploy'
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      gcloud container clusters get-credentials ${_CLOUDSDK_CONTAINER_CLUSTER} --zone ${_CLOUDSDK_COMPUTE_ZONE} --project ${_PROJECT_ID}
+      sed -i "s=gcr.io/project_id_stub/simple-service:version_stub=gcr.io/${PROJECT_ID}/simple-service:${SHORT_SHA}=g" k8s/simple-service-deployment.yaml
+      kubectl apply -n ${_ENV_NAMESPACE} -f k8s/simple-service-deployment.yaml
+      kubectl apply -n ${_ENV_NAMESPACE} -f k8s/simple-service-service.yaml
+      kubectl -n ${_ENV_NAMESPACE} rollout status deployment simple-service

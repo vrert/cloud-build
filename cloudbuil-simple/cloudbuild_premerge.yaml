@@ -1,0 +1,5 @@
+steps:
+  # Build Stage
+  - id: 'Build image'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'Dockerfile-preparation', '-t', 'gcr.io/${PROJECT_ID}/simple-service:${SHORT_SHA}', '.']

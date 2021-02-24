@@ -1,0 +1,75 @@
+steps:
+  # Receive files from bucket
+  - id: 'Receive files from bucket'
+    name: 'gcr.io/cloud-builders/gsutil'
+    args:
+    - 'cp'
+    - '-r'
+    - 'gs://${PROJECT_ID}_cloudbuild/deps/root/.ssh'
+    - '/root/'
+    volumes:
+    - name: 'ssh'
+      path: /root/.ssh
+  # Decrypt the file containing the key
+  - id: 'Decrypt the file containing the key'
+    name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - kms
+    - decrypt
+    - --ciphertext-file=/root/.ssh/id_rsa.enc
+    - --plaintext-file=/root/.ssh/id_rsa
+    - --location=global
+    - --keyring=projects/${PROJECT_ID}/locations/global/keyRings/cloudbuild-github-keyring
+    - --key=projects/${PROJECT_ID}/locations/global/keyRings/cloudbuild-github-keyring/cryptoKeys/github-key
+    volumes:
+    - name: 'ssh'
+      path: /root/.ssh
+  # Set up git with key and domain.
+  - id: 'Set up git with key and domain'
+    name: 'gcr.io/cloud-builders/git'
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      chmod 600 /root/.ssh/id_rsa
+      cat <<EOF >/root/.ssh/config
+      Hostname github.com
+      IdentityFile /root/.ssh/id_rsa
+      EOF
+    volumes:
+    - name: 'ssh'
+      path: /root/.ssh
+
+  # Connect to the repository
+  - id: 'Pull code from repository'
+    name: 'gcr.io/cloud-builders/git'
+    entrypoint: 'bash'
+    args:
+     - '-c'
+     - |
+       git clone -b $BRANCH_NAME git@github.com:vrert/$REPO_NAME
+        cd $REPO_NAME
+        git submodule init
+        git submodule update
+    volumes:
+    - name: 'ssh'
+      path: /root/.ssh
+
+  # Build Stage
+  - id: 'Build image'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', '$REPO_NAME/submodule-config/Dockerfile', '-t', 'gcr.io/${PROJECT_ID}/simple-service:${SHORT_SHA}', '.']
+  - id: 'Push image'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ["push", 'gcr.io/${PROJECT_ID}/simple-service:${SHORT_SHA}']
+  - id: 'Deploy to GKE'
+    name: 'gcr.io/cloud-builders/gke-deploy'
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      gcloud container clusters get-credentials ${_CLOUDSDK_CONTAINER_CLUSTER} --zone ${_CLOUDSDK_COMPUTE_ZONE} --project ${_PROJECT_ID}
+      sed -i "s=gcr.io/project_id_stub/simple-service:version_stub=gcr.io/${PROJECT_ID}/simple-service:${SHORT_SHA}=g" k8s/simple-service-deployment.yaml
+      kubectl apply -n ${_ENV_NAMESPACE} -f k8s/simple-service-deployment.yaml
+      kubectl apply -n ${_ENV_NAMESPACE} -f k8s/simple-service-service.yaml
+      kubectl -n ${_ENV_NAMESPACE} rollout status deployment simple-service

@@ -1,0 +1,4 @@
+FROM gradle:6.7.0-jdk11 as builder
+WORKDIR /home/gradle/project
+COPY . .
+RUN gradle --parallel --build-cache --no-daemon build
